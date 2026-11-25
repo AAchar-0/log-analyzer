@@ -114,9 +114,9 @@ Parallel code only speeds up work that the CPU limits, and virtual threads help 
 
 | Machine | Lines | Strategy | Median (ms) | Speed-up |
 |---|---|---|---|---|
-| PASTE-YOUR-CPU-HERE, PASTE-CORES-HERE cores | 5,000,000 | sequential | PASTE | 1.00x |
-| | | parallel | PASTE | PASTE |
-| | | virtual | PASTE | PASTE |
+| Intel Core i5-6300U (2.40 GHz), 2 cores / 4 threads | 5,000,000 | sequential | 3,961 | 1.00x |
+| | | parallel | 2,057 | 1.93x |
+| | | virtual | 1,939 | 2.04x |
 
 To reproduce:
 
