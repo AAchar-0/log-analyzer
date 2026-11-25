@@ -1,0 +1,25 @@
+# Build output
+target/
+out/
+*.class
+*.jar
+
+# Generated or uploaded logs can be huge and are never source code
+*.log
+samples/
+
+# SECRETS: never commit these
+.env
+*.pem
+*.key
+
+# IDE and OS files
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Personal setup walkthrough: kept on my PC only, not published
+docs/05-github-and-render-guide.md

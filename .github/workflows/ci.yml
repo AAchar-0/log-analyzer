@@ -1,0 +1,23 @@
+# CI = Continuous Integration: GitHub builds and tests your code on every push.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build and run tests
+        run: mvn -B verify
+      - name: Smoke test the packaged JAR (generate, analyse with all strategies, check they agree)
+        run: |
+          java -jar target/log-analyzer.jar generate --lines 200000 --out /tmp/smoke.log
+          java -jar target/log-analyzer.jar analyze --file /tmp/smoke.log --strategy all

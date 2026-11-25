@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "Concurrent Log Analyzer"
+abstract: "A dependency-free Java 21 tool that analyses very large web-server logs sequentially, in parallel and with virtual threads, with a command line, a web app, tests and CI."
+type: software
+authors:
+  - given-names: "Anade"
+    family-names: "Acharo"
+version: "1.0.0"
+date-released: "2026-11-25"
+license: MIT
+repository-code: "https://github.com/AAchar-0/log-analyzer"
+keywords:
+  - java
+  - concurrency
+  - virtual-threads
+  - log-analysis

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Concurrent Log Analyzer</title>
+  <meta name="description" content="Analyse web-server logs sequentially, in parallel and with Java virtual threads, and compare the speed.">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1>Concurrent Log Analyzer</h1>
+    <p class="tagline">Reads web-server logs and reports errors, busy minutes, slow routes and response-time percentiles.
+      Run it one thread at a time, in parallel, or with Java 21 virtual threads, and compare the speed.</p>
+  </header>
+
+  <main>
+    <p class="notice" role="note">
+      Demo project. The sample logs are <strong>synthetic</strong> (made up by the program) and contain no real people.
+      Please do not upload logs that contain real IP addresses or other personal data.
+      Uploaded files are used only to make the report and are deleted straight away.
+    </p>
+
+    <section aria-labelledby="analyse-title">
+      <h2 id="analyse-title">1. Analyse a log</h2>
+      <form id="analyse-form" class="panel" autocomplete="off">
+        <fieldset>
+          <legend>Log source</legend>
+          <label class="choice"><input type="radio" name="source" value="sample" checked> Generate a sample log</label>
+          <label class="choice"><input type="radio" name="source" value="upload"> Upload my own log file</label>
+        </fieldset>
+
+        <div id="sample-options" class="row">
+          <label>Lines in the sample
+            <select id="lines"></select>
+          </label>
+          <label>Seed (same seed = same log)
+            <input id="seed" type="number" min="0" max="1000000000" value="42">
+          </label>
+        </div>
+
+        <div id="upload-options" class="row" hidden>
+          <label>Log file (<span id="max-upload">25</span> MB at most)
+            <input id="file" type="file" accept=".log,.txt,text/plain">
+          </label>
+          <label>Response time in the log is in
+            <select id="unit"><option value="ms">milliseconds</option><option value="us">microseconds</option></select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label>How to process it
+            <select id="strategy">
+              <option value="parallel">Parallel (thread pool)</option>
+              <option value="virtual">Virtual threads</option>
+              <option value="sequential">Sequential (one thread)</option>
+            </select>
+          </label>
+          <button type="submit" id="analyse-button" class="btn">Analyse</button>
+        </div>
+      </form>
+      <p id="analyse-status" class="status" role="status" aria-live="polite"></p>
+      <div id="report" hidden></div>
+    </section>
+
+    <section aria-labelledby="bench-title">
+      <h2 id="bench-title">2. Benchmark the three strategies</h2>
+      <p>Runs all three on the same generated log, after a warm-up run, and shows the median time of each.
+        Results depend on the server's CPU: this demo runs on a small shared machine, so absolute numbers are modest.
+        The command line version on your own computer shows what the code can do with millions of lines.</p>
+      <form id="bench-form" class="panel" autocomplete="off">
+        <div class="row">
+          <label>Lines
+            <select id="bench-lines"></select>
+          </label>
+          <label>Measured runs
+            <select id="bench-runs"></select>
+          </label>
+          <button type="submit" id="bench-button" class="btn">Run benchmark</button>
+        </div>
+      </form>
+      <p id="bench-status" class="status" role="status" aria-live="polite"></p>
+      <div id="bench-result" hidden></div>
+    </section>
+
+    <section aria-labelledby="format-title">
+      <h2 id="format-title">Log format</h2>
+      <p>One request per line: the common web-server format plus the response time at the end.</p>
+      <pre class="code">192.0.2.7 - - [01/Nov/2026:10:15:32 +0000] "GET /api/products/42 HTTP/1.1" 200 1532 18
+client    - user [time]                    "request"                       status bytes ms</pre>
+      <p>Lines that do not match are counted as malformed and skipped. Numbers inside paths are grouped as
+        <code>{id}</code>, so <code>/api/products/17</code> and <code>/api/products/18</code> count as one route.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>&copy; {{YEAR}} &middot; Created by Anade Acharo.
+      <a href="{{PORTFOLIO_URL}}" rel="noopener">Portfolio</a>.
+      <a href="{{SOURCE_URL}}" rel="noopener">Source code</a></p>
+  </footer>
+</body>
+</html>
