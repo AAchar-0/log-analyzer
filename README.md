@@ -2,13 +2,13 @@
 
 > A dependency-free Java 21 tool that reads very large web-server logs and reports error rates, outages, busiest minutes, slowest routes and response-time percentiles. It does the work three ways (one thread, a thread pool, and virtual threads), proves they give identical answers, and benchmarks them honestly.
 
-**LIVE-APP:** [log-analyzer](PASTE-RENDER-URL-HERE)
+**LIVE-APP:** [log-analyzer](https://log-analyzer-vjuz.onrender.com)
 **Source code:** [github.com/AAchar-0/log-analyzer](https://github.com/AAchar-0/log-analyzer)
 **Author:** [Anade Acharo](https://aachar-0.github.io/)
 
 ## Try the live demo
 
-1. Open the [live app](PASTE-RENDER-URL-HERE). The first load can take about a minute, because the free hosting sleeps when idle.
+1. Open the [live app](https://log-analyzer-vjuz.onrender.com). The first load can take about a minute, because the free hosting sleeps when idle.
 2. Keep **Generate a sample log**, pick a size, and click **Analyse**. Look for the four-minute outage the generator plants in every log: it appears under "Minutes with the most server errors".
 3. Try **Run benchmark** to compare the three strategies on the server's CPU.
 4. Or upload your own log (25 MB at most, format below). Do not upload logs with real IP addresses or other personal data.
