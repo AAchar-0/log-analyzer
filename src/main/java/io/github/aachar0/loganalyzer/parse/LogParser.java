@@ -1,5 +1,6 @@
 package io.github.aachar0.loganalyzer.parse;
 
+import io.github.aachar0.loganalyzer.geo.IpParser;
 import io.github.aachar0.loganalyzer.model.LogEntry;
 import io.github.aachar0.loganalyzer.model.Malformed;
 import io.github.aachar0.loganalyzer.model.ParseResult;
@@ -22,6 +23,10 @@ import java.util.Map;
  * Why bytes and not Strings? Reading a line as a String allocates memory for every line. Working on the
  * bytes directly is several times faster, and with millions of lines that matters.
  *
+ * The client address is read into numbers (no String is created) so the country can be looked up while counting.
+ * The address itself is never stored, and text that is not an address (a host name, "-") does not make a line
+ * malformed.
+ *
  * Thread safety: an instance keeps a small cache and a reusable buffer, so it is NOT thread-safe.
  * Every worker creates its own parser (cheap), which avoids locks completely.
  */
@@ -34,6 +39,7 @@ public final class LogParser {
     private final ResponseTimeUnit unit;
     private final Map<Integer, Long> epochDayCache = new HashMap<>();   // yyyymmdd -> days since 1970
     private final StringBuilder routeBuilder = new StringBuilder(64);
+    private final IpParser ipParser = new IpParser();
 
     public LogParser(ResponseTimeUnit unit) {
         this.unit = unit;
@@ -54,13 +60,18 @@ public final class LogParser {
         int end = off + len;
         int i = off;
 
-        // 1) Skip the three leading words: client address, identity, user. (We never store the address.)
+        // 1) Skip the three leading words: client address, identity, user. The first word is the client address:
+        //    remember where it ends so it can be read once the whole line is known to be good.
+        int ipEnd = off;
         for (int word = 0; word < 3; word++) {
             while (i < end && b[i] != ' ') {
                 i++;
             }
             if (i >= end) {
                 return Malformed.INSTANCE;
+            }
+            if (word == 0) {
+                ipEnd = i;
             }
             i++;                                           // step over the space
         }
@@ -160,7 +171,45 @@ public final class LogParser {
         }
 
         String route = normaliseRoute(b, pathStart, pathEnd);
-        return new LogEntry(epochMinute, method, route, status, bytes, (int) millis);
+        // Only login requests need the client address (to find the country), so the other ~95% of lines skip this work.
+        int ipFamily = IpParser.NONE;
+        if (methodLength == 4 && b[methodStart] == 'P' && b[methodStart + 1] == 'O' && b[methodStart + 2] == 'S'
+                && b[methodStart + 3] == 'T' && isLoginPath(b, pathStart, pathEnd)) {
+            ipFamily = ipParser.parse(b, off, ipEnd);       // stays 0 when the first word is not an IP address
+        }
+        return new LogEntry(epochMinute, method, route, status, bytes, (int) millis,
+                ipFamily, ipFamily == IpParser.NONE ? 0L : ipParser.value());
+    }
+
+    /**
+     * True when the path (query string ignored, one trailing slash tolerated) ends in "login" or "signin" in any
+     * letter case. Must agree with LogStats.isLoginAttempt, which decides on the finished route; a test checks this.
+     */
+    static boolean isLoginPath(byte[] b, int start, int end) {
+        for (int k = start; k < end; k++) {
+            if (b[k] == '?') {
+                end = k;
+                break;
+            }
+        }
+        if (end - start > 1 && b[end - 1] == '/') {
+            end--;
+        }
+        int slash = end - 1;
+        while (slash >= start && b[slash] != '/') {
+            slash--;
+        }
+        int length = end - slash - 1;
+        return (length == 5 && matches(b, slash + 1, "login")) || (length == 6 && matches(b, slash + 1, "signin"));
+    }
+
+    private static boolean matches(byte[] b, int from, String word) {
+        for (int k = 0; k < word.length(); k++) {
+            if ((b[from + k] | 0x20) != word.charAt(k)) {            // | 0x20 makes ASCII letters lower case
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

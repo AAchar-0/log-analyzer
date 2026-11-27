@@ -6,6 +6,8 @@ import io.github.aachar0.loganalyzer.engine.Analyzer;
 import io.github.aachar0.loganalyzer.engine.Benchmark;
 import io.github.aachar0.loganalyzer.engine.ProcessingStrategy;
 import io.github.aachar0.loganalyzer.gen.LogGenerator;
+import io.github.aachar0.loganalyzer.geo.CountryList;
+import io.github.aachar0.loganalyzer.geo.GeoDatabase;
 import io.github.aachar0.loganalyzer.parse.ResponseTimeUnit;
 import io.github.aachar0.loganalyzer.report.JsonReport;
 import io.github.aachar0.loganalyzer.report.TextReport;
@@ -31,7 +33,8 @@ import java.util.Set;
 public final class Main {
 
     private static final Set<String> VALUE_OPTIONS = Set.of("lines", "out", "seed", "file", "strategy", "format",
-            "top", "time-unit", "runs", "warmups", "threads", "chunk-mb", "min-route-hits", "port", "host");
+            "top", "time-unit", "runs", "warmups", "threads", "chunk-mb", "min-route-hits", "port", "host",
+            "blocked-countries", "allowed-countries", "worldwide");
 
     private Main() {
     }
@@ -68,7 +71,8 @@ public final class Main {
                 Path out = Path.of(required(options, "out"));
                 long lines = Long.parseLong(options.getOrDefault("lines", "1000000"));
                 long seed = Long.parseLong(options.getOrDefault("seed", "42"));
-                long size = LogGenerator.generate(out, lines, seed);
+                boolean worldwide = Boolean.parseBoolean(options.getOrDefault("worldwide", "false"));
+                long size = LogGenerator.generate(out, lines, seed, worldwide);
                 System.out.printf("Wrote %,d lines (%.1f MB) to %s%n", lines, size / 1_000_000.0, out);
                 return 0;
             }
@@ -112,6 +116,14 @@ public final class Main {
                 ? ProcessingStrategy.all(1).stream().map(ProcessingStrategy::name).toList()
                 : List.of(strategy);
 
+        Set<String> blocked = options.containsKey("blocked-countries")
+                ? CountryList.parse(options.get("blocked-countries")) : CountryList.fromEnvironment("BLOCKED_COUNTRIES");
+        Set<String> allowed = options.containsKey("allowed-countries")
+                ? CountryList.parse(options.get("allowed-countries")) : CountryList.fromEnvironment("ALLOWED_COUNTRIES");
+        if (names.size() > 1 && GeoDatabase.enabled()) {
+            GeoDatabase.get();                                    // load the location data first so no strategy pays for it
+        }
+
         AnalysisResult first = null;
         boolean allAgree = true;
         for (String name : names) {
@@ -122,6 +134,8 @@ public final class Main {
                     .timeUnit(ResponseTimeUnit.fromText(options.getOrDefault("time-unit", "ms")))
                     .topN(Integer.parseInt(options.getOrDefault("top", "10")))
                     .minRouteHits(Integer.parseInt(options.getOrDefault("min-route-hits", "10")))
+                    .blockedCountries(blocked)
+                    .allowedCountries(allowed)
                     .build();
             AnalysisResult result = Analyzer.run(config);
             if (first == null) {
@@ -202,9 +216,13 @@ public final class Main {
                 Commands:
                   generate   Write a synthetic web-server log.
                              --out FILE (required)  --lines N (default 1000000)  --seed N (default 42)
+                             --worldwide true  (clients from many countries, to demo the login-by-country report)
                   analyze    Read a log and print the report.
                              --file FILE (required)  --strategy sequential|parallel|virtual|all (default parallel)
                              --format text|json  --top N  --time-unit ms|us  --threads N  --chunk-mb N
+                             --blocked-countries RU,CN  areas you do NOT deal in: logins from there are flagged malicious
+                             --allowed-countries KE,UG  optional: logins from any other country are flagged malicious
+                             (defaults come from the BLOCKED_COUNTRIES and ALLOWED_COUNTRIES environment variables)
                   benchmark  Time all three strategies fairly and check they agree.
                              --file FILE (required)  --runs N (default 5)  --warmups N (default 2)
                   serve      Start the web app (uses the PORT environment variable, default 8080).

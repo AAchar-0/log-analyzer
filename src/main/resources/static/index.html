@@ -38,6 +38,7 @@
           <label>Seed (same seed = same log)
             <input id="seed" type="number" min="0" max="1000000000" value="42">
           </label>
+          <label class="choice"><input id="worldwide" type="checkbox"> Simulate visitors from many countries</label>
         </div>
 
         <div id="upload-options" class="row" hidden>
@@ -46,6 +47,15 @@
           </label>
           <label>Response time in the log is in
             <select id="unit"><option value="ms">milliseconds</option><option value="us">microseconds</option></select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label>Areas we do NOT deal in (country codes)
+            <input id="blocked" type="text" maxlength="1200" placeholder="e.g. RU, CN, KP" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Only allow these countries (optional)
+            <input id="allowed" type="text" maxlength="1200" placeholder="e.g. KE, UG, TZ" autocomplete="off" spellcheck="false">
           </label>
         </div>
 
@@ -89,6 +99,9 @@
       <p>One request per line: the common web-server format plus the response time at the end.</p>
       <pre class="code">192.0.2.7 - - [01/Nov/2026:10:15:32 +0000] "GET /api/products/42 HTTP/1.1" 200 1532 18
 client    - user [time]                    "request"                       status bytes ms</pre>
+      <p>Login attempts are <code>POST</code> requests to a route ending in <code>/login</code> or <code>/signin</code>.
+        The client address is used only to find the country and nearest city of those attempts; it is never stored.
+        Logins from the areas you list above are treated as malicious.</p>
       <p>Lines that do not match are counted as malformed and skipped. Numbers inside paths are grouped as
         <code>{id}</code>, so <code>/api/products/17</code> and <code>/api/products/18</code> count as one route.</p>
     </section>
@@ -97,7 +110,8 @@ client    - user [time]                    "request"                       statu
   <footer class="site-footer">
     <p>&copy; {{YEAR}} &middot; Created by Anade Acharo.
       <a href="{{PORTFOLIO_URL}}" rel="noopener">Portfolio</a>.
-      <a href="{{SOURCE_URL}}" rel="noopener">Source code</a></p>
+      <a href="{{SOURCE_URL}}" rel="noopener">Source code</a>.
+      <a href="https://db-ip.com" rel="noopener">IP Geolocation by DB-IP</a></p>
   </footer>
 </body>
 </html>

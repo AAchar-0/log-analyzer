@@ -16,7 +16,8 @@ import java.util.Map;
  * the project: it avoids the slow shared-lock traffic that makes naive parallel code slower than
  * sequential code.
  *
- * Memory use grows with the number of DISTINCT minutes and DISTINCT routes, not with the number of lines.
+ * Memory use grows with the number of DISTINCT minutes, DISTINCT routes and DISTINCT places that tried to log in,
+ * not with the number of lines.
  */
 public final class LogStats {
 
@@ -29,6 +30,7 @@ public final class LogStats {
     private final LatencyHistogram latency = new LatencyHistogram();
     private final Map<Long, long[]> minutes = new HashMap<>();        // minute -> {requests, serverErrors}
     private final Map<String, RouteStats> routes = new HashMap<>();   // "GET /api/x/{id}" -> totals
+    private final GeoCounts geo = new GeoCounts();                    // login attempts per place (never per address)
 
     /** Counts one parsed line. The switch must cover both kinds of ParseResult (the type is sealed). */
     public void accept(ParseResult result) {
@@ -53,6 +55,28 @@ public final class LogStats {
         }
         routes.computeIfAbsent(e.method() + " " + e.route(), k -> new RouteStats())
                 .add(e.millis(), e.isServerError());
+        if (isLoginAttempt(e)) {
+            geo.recordLogin(e);
+        }
+    }
+
+    /**
+     * A login attempt is a POST to a route whose last part is "login" or "signin", for example /api/auth/login.
+     * Getting the page itself (GET /login) is not an attempt.
+     */
+    static boolean isLoginAttempt(LogEntry e) {
+        if (!"POST".equals(e.method())) {
+            return false;
+        }
+        String route = e.route();
+        int end = route.length();
+        if (end > 1 && route.charAt(end - 1) == '/') {
+            end--;                                                 // tolerate /api/auth/login/
+        }
+        int slash = route.lastIndexOf('/', end - 1);
+        int length = end - slash - 1;
+        return (length == 5 && route.regionMatches(true, slash + 1, "login", 0, 5))
+                || (length == 6 && route.regionMatches(true, slash + 1, "signin", 0, 6));
     }
 
     /** Adds everything counted by another LogStats into this one. */
@@ -73,6 +97,7 @@ public final class LogStats {
         });
         other.routes.forEach((route, stats) ->
                 routes.computeIfAbsent(route, k -> new RouteStats()).merge(stats));
+        geo.merge(other.geo);
     }
 
     public long requests() {
@@ -111,5 +136,10 @@ public final class LogStats {
     /** Read-only view: route -> totals. */
     public Map<String, RouteStats> routes() {
         return Collections.unmodifiableMap(routes);
+    }
+
+    /** Login attempts per place. */
+    public GeoCounts geo() {
+        return geo;
     }
 }

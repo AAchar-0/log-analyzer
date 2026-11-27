@@ -4,6 +4,7 @@ import io.github.aachar0.loganalyzer.parse.ResponseTimeUnit;
 import io.github.aachar0.loganalyzer.report.ReportOptions;
 
 import java.nio.file.Path;
+import java.util.Set;
 
 /**
  * Settings for one analysis run, created with the BUILDER PATTERN:
@@ -29,7 +30,7 @@ public final class AnalysisConfig {
         this.strategy = ProcessingStrategy.byName(b.strategyName, b.threads);
         this.chunkBytes = b.chunkBytes;
         this.timeUnit = b.timeUnit;
-        this.reportOptions = new ReportOptions(b.topN, b.minRouteHits);
+        this.reportOptions = new ReportOptions(b.topN, b.minRouteHits, b.blockedCountries, b.allowedCountries);
     }
 
     public Path file() {
@@ -73,6 +74,8 @@ public final class AnalysisConfig {
         private ResponseTimeUnit timeUnit = ResponseTimeUnit.MILLIS;
         private int topN = 10;
         private int minRouteHits = 10;
+        private Set<String> blockedCountries = Set.of();
+        private Set<String> allowedCountries = Set.of();
 
         private Builder(Path file) {
             this.file = java.util.Objects.requireNonNull(file, "file");
@@ -105,6 +108,18 @@ public final class AnalysisConfig {
 
         public Builder minRouteHits(int minRouteHits) {
             this.minRouteHits = minRouteHits;
+            return this;
+        }
+
+        /** Areas the business does not deal in (two-letter codes): a login from there is treated as malicious. */
+        public Builder blockedCountries(Set<String> codes) {
+            this.blockedCountries = java.util.Objects.requireNonNull(codes, "codes");
+            return this;
+        }
+
+        /** Optional: when not empty, a login from any country NOT listed is treated as malicious. */
+        public Builder allowedCountries(Set<String> codes) {
+            this.allowedCountries = java.util.Objects.requireNonNull(codes, "codes");
             return this;
         }
 
