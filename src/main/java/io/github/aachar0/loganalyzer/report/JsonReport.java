@@ -49,12 +49,51 @@ public final class JsonReport {
                         + ",\"serverErrors\":" + m.serverErrors() + "}"));
         sb.append(",\"topRoutes\":").append(array(r.topRoutes(), JsonReport::route));
         sb.append(",\"slowestRoutes\":").append(array(r.slowestRoutes(), JsonReport::route));
+        sb.append(",\"geo\":").append(geo(r.geo()));
         return sb.append('}').toString();
+    }
+
+    /** The login-attempts-by-country section. Names of countries and cities go through quote() like all text. */
+    static String geo(GeoReport g) {
+        StringBuilder sb = new StringBuilder(1024);
+        sb.append("{\"available\":").append(g.available());
+        sb.append(",\"source\":").append(quote(g.source()));
+        sb.append(",\"loginAttempts\":").append(g.loginAttempts());
+        sb.append(",\"locatedAttempts\":").append(g.locatedAttempts());
+        sb.append(",\"unknownAttempts\":").append(g.unknownAttempts());
+        sb.append(",\"countriesSeen\":").append(g.countriesSeen());
+        sb.append(",\"policy\":{\"configured\":").append(!g.blockedCountries().isEmpty() || !g.allowedCountries().isEmpty())
+                .append(",\"blocked\":").append(array(g.blockedCountries(), JsonReport::quote))
+                .append(",\"allowed\":").append(array(g.allowedCountries(), JsonReport::quote)).append('}');
+        GeoReport.Restricted x = g.restricted();
+        sb.append(",\"restricted\":{\"attempts\":").append(x.attempts())
+                .append(",\"successes\":").append(x.successes())
+                .append(",\"failures\":").append(x.failures())
+                .append(",\"countries\":").append(x.countries())
+                .append(",\"percentOfLocated\":").append(number(g.restrictedPercent())).append('}');
+        sb.append(",\"topCountries\":").append(array(g.topCountries(), JsonReport::country));
+        sb.append(",\"bottomCountries\":").append(array(g.bottomCountries(), JsonReport::country));
+        sb.append(",\"restrictedCountries\":").append(array(g.restrictedCountries(), JsonReport::country));
+        return sb.append('}').toString();
+    }
+
+    private static String country(GeoReport.CountryLogins c) {
+        return "{\"code\":" + quote(c.code()) + ",\"name\":" + quote(c.name())
+                + ",\"attempts\":" + c.attempts() + ",\"successes\":" + c.successes()
+                + ",\"failures\":" + c.failures() + ",\"restricted\":" + c.restricted()
+                + ",\"nearestCities\":" + array(c.cities(),
+                city -> "{\"city\":" + quote(city.city()) + ",\"region\":" + quote(city.region())
+                        + ",\"attempts\":" + city.attempts() + "}") + "}";
     }
 
     private static String route(Report.RouteSummary s) {
         return "{\"route\":" + quote(s.route()) + ",\"hits\":" + s.hits() + ",\"averageMs\":" + number(s.averageMs())
                 + ",\"maxMs\":" + s.maxMs() + ",\"serverErrors\":" + s.serverErrors() + "}";
+    }
+
+    /** A JSON array of strings, each properly escaped. */
+    public static String stringArray(java.util.Collection<String> items) {
+        return array(java.util.List.copyOf(items), JsonReport::quote);
     }
 
     private static String label(long minute) {

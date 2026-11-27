@@ -57,3 +57,8 @@ pre.code { background: var(--panel); border: 1px solid var(--line); border-radiu
 .site-footer { padding-block: 2rem; margin-top: 2rem; border-top: 1px solid var(--line); color: var(--muted); }
 .site-footer p { margin: 0; }
 .site-footer a { color: var(--accent); font-weight: 600; }
+.card.bad { border-color: var(--bad); }
+.card.bad .value { color: var(--bad); }
+.flag { color: var(--bad); font-weight: 700; white-space: nowrap; }
+.cities { font-size: .9rem; color: var(--muted); }
+input[type="text"] { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .45rem .6rem; min-height: 2.5rem; min-width: 14rem; }

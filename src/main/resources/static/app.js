@@ -111,7 +111,75 @@
       [{ text: "Route" }, { text: "Avg ms", num: true }, { text: "Max ms", num: true }, { text: "Requests", num: true }],
       r.slowestRoutes.map((x) => [cell(x.route, "route"), cell(dec(x.averageMs), "num"), cell(fmt(x.maxMs), "num"), cell(fmt(x.hits), "num")])));
 
+    renderGeo(box, r.geo);
+
     box.hidden = false;
+  }
+
+  // Login attempts by country. Names of countries and cities are text from a data file, shown with textContent like
+  // everything else on this page.
+  // "Nairobi (2,633), Mombasa (870)". When two places share a city name, the region is added to tell them apart.
+  function cityText(cities) {
+    if (cities.length === 0) return "-";
+    const names = cities.map((x) => x.city || x.region || "city unknown");
+    return cities.map((x, i) => {
+      const twin = names.some((n, j) => j !== i && n === names[i]);
+      return names[i] + (twin && x.region && x.city ? " - " + x.region : "") + " (" + fmt(x.attempts) + ")";
+    }).join(", ");
+  }
+
+  function countryTable(list, maxAttempts) {
+    return table(
+      [{ text: "Country" }, { text: "Attempts", num: true }, { text: "Succeeded", num: true }, { text: "Failed", num: true },
+        { text: "Nearest cities (attempts)" }, { text: "" }],
+      list.map((c) => [
+        el("td", {}, c.code + " " + c.name, c.restricted ? el("div", { class: "flag" }, "MALICIOUS AREA") : ""),
+        cell(fmt(c.attempts), "num"), cell(fmt(c.successes), "num"), cell(fmt(c.failures), "num"),
+        el("td", { class: "cities" }, cityText(c.nearestCities)),
+        barCell(c.attempts, maxAttempts, c.restricted)]));
+  }
+
+  function renderGeo(box, g) {
+    box.append(el("h3", {}, "Login attempts by country"));
+    if (!g) return;
+    if (g.loginAttempts === 0) {
+      box.append(el("p", {}, "No login attempts in this log (POST requests to a route ending in /login or /signin)."));
+      return;
+    }
+    if (!g.available) {
+      box.append(el("p", { class: "verdict bad" }, "Location data is not available on this server, so countries cannot be shown."));
+      return;
+    }
+    const card = (label, value, bad) => el("div", { class: "card" + (bad ? " bad" : "") }, el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+    const cards = [card("Login attempts", fmt(g.loginAttempts)), card("Countries seen", fmt(g.countriesSeen))];
+    if (g.policy.configured) {
+      cards.push(card("From restricted areas", fmt(g.restricted.attempts) + " (" + dec(g.restricted.percentOfLocated, 1) + "%)", g.restricted.attempts > 0));
+      cards.push(card("Restricted logins that SUCCEEDED", fmt(g.restricted.successes), g.restricted.successes > 0));
+    }
+    box.append(el("div", { class: "cards" }, ...cards));
+
+    if (g.policy.configured) {
+      box.append(el("p", {}, "Areas you do not deal in: " + (g.policy.blocked.join(", ") || "none listed") +
+        (g.policy.allowed.length ? ". Only allowed: " + g.policy.allowed.join(", ") : "") +
+        ". Logins from any other area than allowed are treated as malicious."));
+      if (g.restricted.successes > 0) {
+        box.append(el("p", { class: "verdict bad" }, fmt(g.restricted.successes) +
+          " login(s) from restricted areas were accepted. Treat those accounts as possibly compromised."));
+      }
+    } else {
+      box.append(el("p", {}, "No areas set. Type the country codes of areas you do not deal in (for example RU, CN) above and analyse again to flag logins from there as malicious."));
+    }
+    if (g.unknownAttempts > 0) {
+      box.append(el("p", { class: "cities" }, fmt(g.unknownAttempts) + " attempt(s) could not be placed (private, reserved or unlisted address, or no address in the log)."));
+    }
+
+    const top = Math.max(...g.topCountries.map((c) => c.attempts), 1);
+    box.append(el("h3", {}, "Top countries trying to log in"), countryTable(g.topCountries, top));
+    box.append(el("h3", {}, "Bottom countries (fewest attempts, among countries that tried)"), countryTable(g.bottomCountries, top));
+    if (g.restrictedCountries.length > 0) {
+      box.append(el("h3", {}, "Restricted areas trying to log in (treated as malicious)"), countryTable(g.restrictedCountries, top));
+    }
+    box.append(el("p", { class: "cities" }, "Locations are estimates made from IP addresses. People using a VPN or a mobile network appear where their provider's server is. " + g.source));
   }
 
   function renderBenchmark(data) {
@@ -141,6 +209,8 @@
     fillSelect($("bench-lines"), [10000, 50000, 100000, 200000, 300000, 500000, 1000000], config.maxBenchmarkLines, 100000);
     fillSelect($("bench-runs"), [1, 3, 5, 7, 9], config.maxBenchmarkRuns, 3);
     $("max-upload").textContent = config.maxUploadMb;
+    $("blocked").value = (config.defaultBlocked || []).join(", ");
+    $("allowed").value = (config.defaultAllowed || []).join(", ");
 
     for (const radio of document.querySelectorAll('input[name="source"]')) {
       radio.addEventListener("change", () => {
@@ -155,9 +225,12 @@
       const source = document.querySelector('input[name="source"]:checked').value;
       const params = new URLSearchParams({ source, strategy: $("strategy").value });
       let body = null;
+      params.set("blocked", $("blocked").value.trim());
+      params.set("allowed", $("allowed").value.trim());
       if (source === "sample") {
         params.set("lines", $("lines").value);
         params.set("seed", $("seed").value || "42");
+        if ($("worldwide").checked) params.set("worldwide", "true");
       } else {
         const file = $("file").files[0];
         if (!file) { setStatus("analyse-status", "Choose a log file first.", true); return; }

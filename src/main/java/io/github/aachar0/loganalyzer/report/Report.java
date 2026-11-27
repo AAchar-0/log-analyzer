@@ -28,7 +28,8 @@ public record Report(
         List<MinuteCount> busiestMinutes,
         List<MinuteCount> worstErrorMinutes,
         List<RouteSummary> topRoutes,
-        List<RouteSummary> slowestRoutes) {
+        List<RouteSummary> slowestRoutes,
+        GeoReport geo) {
 
     public record Latency(double averageMs, long p50, long p90, long p95, long p99, long maxMs) {
     }
@@ -113,6 +114,6 @@ public record Report(
         return new Report(s.requests(), s.malformed(), s.totalBytes(), s.firstMinute(), s.lastMinute(),
                 client, server, latency, List.copyOf(statuses),
                 List.copyOf(minutes.subList(0, Math.min(options.topN(), minutes.size()))), errorMinutes,
-                top, slowest);
+                top, slowest, GeoReport.from(s.geo(), options));
     }
 }

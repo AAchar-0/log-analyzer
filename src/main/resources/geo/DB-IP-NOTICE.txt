@@ -1,0 +1,16 @@
+IP location data used by the login-by-country report
+=====================================================
+
+geo-ip.bin.gz is built from "IP to City Lite" by DB-IP (https://db-ip.com), data month 2026-11,
+which is licensed under the Creative Commons Attribution 4.0 International licence (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/
+
+Required credit (shown in the footer of the web page): "IP Geolocation by DB-IP" with a link to https://db-ip.com
+
+The CSV files were taken from https://github.com/sapics/ip-location-db and converted with
+io.github.aachar0.loganalyzer.geo.GeoDbBuilder. Locations are estimates: an address may be placed in the wrong
+city, and VPN or mobile users appear where their provider's server is.
+
+To refresh the data (DB-IP publishes a new version every month), download dbip-city-ipv4.csv.gz and
+dbip-city-ipv6.csv.gz, then run the command in the comment at the top of GeoDbBuilder.java and update the month
+in this notice.

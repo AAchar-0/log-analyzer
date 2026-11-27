@@ -7,6 +7,9 @@ import io.github.aachar0.loganalyzer.engine.AnalysisResult;
 import io.github.aachar0.loganalyzer.engine.Analyzer;
 import io.github.aachar0.loganalyzer.engine.Benchmark;
 import io.github.aachar0.loganalyzer.gen.LogGenerator;
+import io.github.aachar0.loganalyzer.geo.CountryList;
+import io.github.aachar0.loganalyzer.geo.GeoDatabase;
+import io.github.aachar0.loganalyzer.geo.IpParser;
 import io.github.aachar0.loganalyzer.parse.ResponseTimeUnit;
 import io.github.aachar0.loganalyzer.report.JsonReport;
 
@@ -26,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -37,7 +41,8 @@ import java.util.concurrent.Semaphore;
  *   GET  /               the page          GET /app.js, /style.css   its files
  *   GET  /health         "ok" (used by the hosting platform)
  *   GET  /api/config     limits of this server
- *   POST /api/analyze    source=sample|upload, strategy, lines, seed, top, unit
+ *   POST /api/analyze    source=sample|upload, strategy, lines, seed, top, unit,
+ *                        blocked=RU,CN (areas you do not deal in), allowed=KE,UG (optional), worldwide=true (sample only)
  *   POST /api/benchmark  lines, runs
  *
  * Built for a public demo, so it defends itself:
@@ -46,16 +51,24 @@ import java.util.concurrent.Semaphore;
  *   - only a few analyses run at once, the others get "429 try again";
  *   - uploaded and generated files live in the temp folder and are deleted right after use;
  *   - the browser page builds its tables with textContent, so text from a log can never become HTML;
- *   - client addresses are never logged.
+ *   - client addresses are never logged (nor kept: login attempts are counted per place, not per address);
+ *   - each client may start only a limited number of analyses per minute;
+ *   - country lists typed by visitors are validated (two-letter codes, length capped).
  */
 public final class WebServer {
 
     /** Size limits. Free hosting has little memory and CPU, so the defaults are modest; raise them with environment variables. */
     public record Limits(long maxUploadBytes, long maxSampleLines, long maxBenchmarkLines,
-                         int maxBenchmarkRuns, int maxConcurrent) {
+                         int maxBenchmarkRuns, int maxConcurrent, int maxRequestsPerMinute) {
+
+        /** Same limits as before, with the default request rate per client. */
+        public Limits(long maxUploadBytes, long maxSampleLines, long maxBenchmarkLines, int maxBenchmarkRuns,
+                      int maxConcurrent) {
+            this(maxUploadBytes, maxSampleLines, maxBenchmarkLines, maxBenchmarkRuns, maxConcurrent, 30);
+        }
 
         public static Limits defaults() {
-            return new Limits(25L * 1024 * 1024, 1_000_000, 300_000, 5, 1);
+            return new Limits(25L * 1024 * 1024, 1_000_000, 300_000, 5, 1, 30);
         }
 
         public static Limits fromEnvironment() {
@@ -65,7 +78,8 @@ public final class WebServer {
                     envLong("MAX_SAMPLE_LINES", d.maxSampleLines()),
                     envLong("MAX_BENCHMARK_LINES", d.maxBenchmarkLines()),
                     (int) envLong("MAX_BENCHMARK_RUNS", d.maxBenchmarkRuns()),
-                    (int) envLong("MAX_CONCURRENT", d.maxConcurrent()));
+                    (int) envLong("MAX_CONCURRENT", d.maxConcurrent()),
+                    (int) envLong("MAX_REQUESTS_PER_MINUTE", d.maxRequestsPerMinute()));
         }
 
         private static long envLong(String name, long fallback) {
@@ -97,6 +111,21 @@ public final class WebServer {
         }
     }
 
+    /**
+     * The default areas for logins: BLOCKED_COUNTRIES (areas the business does not deal in) and optionally
+     * ALLOWED_COUNTRIES. A visitor can override both for one analysis with the blocked and allowed parameters.
+     */
+    public record Policy(Set<String> blocked, Set<String> allowed) {
+
+        public static Policy none() {
+            return new Policy(Set.of(), Set.of());
+        }
+
+        public static Policy fromEnvironment() {
+            return new Policy(CountryList.fromEnvironment("BLOCKED_COUNTRIES"), CountryList.fromEnvironment("ALLOWED_COUNTRIES"));
+        }
+    }
+
     /** An error that should reach the visitor as a clear message with a specific HTTP status. */
     private static final class ApiException extends RuntimeException {
         private static final long serialVersionUID = 1L;
@@ -116,16 +145,20 @@ public final class WebServer {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Limits limits;
     private final Links links;
+    private final Policy policy;
+    private final RateLimiter rateLimiter;
     private final Semaphore analysisSlots;
     private final Semaphore uploadSlots = new Semaphore(4);
     private final String indexTemplate;
     private final byte[] appJs;
     private final byte[] styleCss;
 
-    private WebServer(HttpServer server, Limits limits, Links links) throws IOException {
+    private WebServer(HttpServer server, Limits limits, Links links, Policy policy) throws IOException {
         this.server = server;
         this.limits = limits;
         this.links = links;
+        this.policy = policy;
+        this.rateLimiter = new RateLimiter(limits.maxRequestsPerMinute());
         this.analysisSlots = new Semaphore(Math.max(1, limits.maxConcurrent()));
         this.indexTemplate = new String(resource("index.html"), StandardCharsets.UTF_8);
         this.appJs = resource("app.js");
@@ -134,12 +167,20 @@ public final class WebServer {
         server.createContext("/", this::handle);
     }
 
+    /** Default areas come from the BLOCKED_COUNTRIES and ALLOWED_COUNTRIES environment variables. */
     public static WebServer create(String host, int port, Limits limits, Links links) throws IOException {
-        return new WebServer(HttpServer.create(new InetSocketAddress(host, port), 0), limits, links);
+        return create(host, port, limits, links, Policy.fromEnvironment());
+    }
+
+    public static WebServer create(String host, int port, Limits limits, Links links, Policy policy) throws IOException {
+        return new WebServer(HttpServer.create(new InetSocketAddress(host, port), 0), limits, links, policy);
     }
 
     public void start() {
         server.start();
+        if (GeoDatabase.enabled()) {
+            GeoDatabase.preload();                          // load the location data in the background, off the request path
+        }
     }
 
     /** The port actually used (useful when created with port 0 in tests). */
@@ -211,14 +252,19 @@ public final class WebServer {
                         + ",\"maxBenchmarkLines\":" + limits.maxBenchmarkLines()
                         + ",\"maxBenchmarkRuns\":" + limits.maxBenchmarkRuns()
                         + ",\"cores\":" + Runtime.getRuntime().availableProcessors()
-                        + ",\"java\":" + Runtime.version().feature() + "}");
+                        + ",\"java\":" + Runtime.version().feature()
+                        + ",\"geo\":" + GeoDatabase.enabled()
+                        + ",\"defaultBlocked\":" + JsonReport.stringArray(policy.blocked())
+                        + ",\"defaultAllowed\":" + JsonReport.stringArray(policy.allowed()) + "}");
             }
             case "/api/analyze" -> {
                 requireMethod(method, "POST");
+                checkRate(ex);
                 return analyze(ex);
             }
             case "/api/benchmark" -> {
                 requireMethod(method, "POST");
+                checkRate(ex);
                 return benchmark(ex);
             }
             default -> throw new ApiException(404, "Not found");
@@ -232,6 +278,9 @@ public final class WebServer {
         int top = (int) numberParam(q, "top", 10, 1, 50);
         ResponseTimeUnit unit = parseUnit(q.getOrDefault("unit", "ms"));
         checkStrategy(strategy);
+        Set<String> blocked = countries(q, "blocked", policy.blocked());
+        Set<String> allowed = countries(q, "allowed", policy.allowed());
+        boolean worldwide = Boolean.parseBoolean(q.getOrDefault("worldwide", "false"));
 
         Path temp = Files.createTempFile("log-analyzer-", ".log");
         try {
@@ -243,9 +292,9 @@ public final class WebServer {
                     acquireAnalysisSlot();
                     try {
                         long t0 = System.nanoTime();
-                        LogGenerator.generate(temp, lines, seed);
+                        LogGenerator.generate(temp, lines, seed, worldwide);
                         generateMillis = (System.nanoTime() - t0) / 1_000_000;
-                        return sendJson(ex, 200, runAnalysis(temp, strategy, top, unit, source, generateMillis));
+                        return sendJson(ex, 200, runAnalysis(temp, strategy, top, unit, source, generateMillis, blocked, allowed));
                     } finally {
                         analysisSlots.release();
                     }
@@ -254,7 +303,7 @@ public final class WebServer {
                     receiveUpload(ex, temp);
                     acquireAnalysisSlot();
                     try {
-                        return sendJson(ex, 200, runAnalysis(temp, strategy, top, unit, source, 0));
+                        return sendJson(ex, 200, runAnalysis(temp, strategy, top, unit, source, 0, blocked, allowed));
                     } finally {
                         analysisSlots.release();
                     }
@@ -267,7 +316,8 @@ public final class WebServer {
     }
 
     private String runAnalysis(Path file, String strategy, int top, ResponseTimeUnit unit, String source,
-                               long generateMillis) throws IOException, InterruptedException {
+                               long generateMillis, Set<String> blocked, Set<String> allowed)
+            throws IOException, InterruptedException {
         int cores = Runtime.getRuntime().availableProcessors();
         AnalysisConfig config = AnalysisConfig.builder(file)
                 .strategy(strategy)
@@ -276,6 +326,8 @@ public final class WebServer {
                 .timeUnit(unit)
                 .topN(top)
                 .minRouteHits(5)
+                .blockedCountries(blocked)
+                .allowedCountries(allowed)
                 .build();
         AnalysisResult result = Analyzer.run(config);
         String json = JsonReport.render(result);
@@ -300,6 +352,48 @@ public final class WebServer {
             analysisSlots.release();
             Files.deleteIfExists(temp);
         }
+    }
+
+    /** Reads a country list parameter; when the parameter is missing the server's default is used. */
+    private static Set<String> countries(Map<String, String> q, String name, Set<String> fallback) {
+        String text = q.get(name);
+        if (text == null) {
+            return fallback;
+        }
+        try {
+            return CountryList.parse(text);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, e.getMessage());
+        }
+    }
+
+    /** Refuses a client that has used up its requests for this minute. */
+    private void checkRate(HttpExchange ex) {
+        if (!rateLimiter.tryAcquire(clientKey(ex))) {
+            ex.getResponseHeaders().set("Retry-After", "60");
+            throw new ApiException(429, "Too many requests from your connection. Please wait a minute and try again.");
+        }
+    }
+
+    /**
+     * Identifies the client for rate limiting. Behind a hosting platform every connection comes from the platform's
+     * own (private) proxy, so only then is the X-Forwarded-For header believed, and only its LAST entry, which is the
+     * one the proxy itself added. Anything a visitor puts earlier in that header is ignored. A connection from the
+     * open internet cannot choose its own identity.
+     */
+    private static String clientKey(HttpExchange ex) {
+        java.net.InetAddress peer = ex.getRemoteAddress().getAddress();
+        String key = peer.getHostAddress();
+        boolean proxy = peer.isLoopbackAddress() || peer.isSiteLocalAddress() || peer.isLinkLocalAddress()
+                || (peer.getAddress().length == 16 && (peer.getAddress()[0] & 0xFE) == 0xFC);
+        String forwarded = proxy ? ex.getRequestHeaders().getFirst("X-Forwarded-For") : null;
+        if (forwarded != null) {
+            String last = forwarded.substring(forwarded.lastIndexOf(',') + 1).trim();
+            if (new IpParser().parse(last) != IpParser.NONE) {
+                return last;
+            }
+        }
+        return key;
     }
 
     private void acquireAnalysisSlot() {
@@ -433,6 +527,10 @@ public final class WebServer {
         h.set("Referrer-Policy", "no-referrer");
         h.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; "
                 + "frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+        h.set("X-Frame-Options", "DENY");
+        h.set("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=(), usb=()");
+        h.set("Cross-Origin-Opener-Policy", "same-origin");
+        h.set("Strict-Transport-Security", "max-age=15552000");      // browsers only act on this over HTTPS
         if (api) {
             h.set("Cache-Control", "no-store");
             if (!links.allowedOrigin().isEmpty()) {

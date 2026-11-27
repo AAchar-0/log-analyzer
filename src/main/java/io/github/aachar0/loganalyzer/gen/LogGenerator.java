@@ -26,6 +26,10 @@ import java.util.SplittableRandom;
  *    so the report has a real story to find.
  *
  * Client addresses come from the ranges reserved for documentation (RFC 5737), which never belong to a person.
+ *
+ * Optional "worldwide" mode (off by default, so default files do not change by a single byte): addresses are drawn
+ * from hosting and data-centre blocks in about 30 countries, mostly Kenya, so the login-by-country report has
+ * something to show. These blocks serve machines, not people, and the addresses are still synthetic.
  */
 public final class LogGenerator {
 
@@ -33,6 +37,24 @@ public final class LogGenerator {
     public static final long START_EPOCH_MILLIS = Instant.parse("2026-11-01T00:00:00Z").toEpochMilli();
 
     private static final String[] ADDRESS_PREFIXES = {"192.0.2.", "198.51.100.", "203.0.113."};
+
+    /** Worldwide mode: {first three numbers of an address block, country}. The last number is random. */
+    private static final String[][] SITES = {
+            {"3.164.187.", "KE"}, {"2.17.161.", "KE"}, {"41.89.198.", "KE"}, {"41.89.163.", "KE"},
+            {"2.17.248.", "UG"}, {"2.17.250.", "TZ"}, {"41.138.80.", "RW"}, {"9.170.98.", "ET"},
+            {"2.18.12.", "NG"}, {"2.16.77.", "GH"}, {"2.16.14.", "ZA"}, {"3.175.185.", "EG"},
+            {"1.178.4.", "US"}, {"2.56.116.", "US"}, {"2.18.114.", "US"}, {"1.178.94.", "GB"},
+            {"1.178.10.", "DE"}, {"1.178.90.", "FR"}, {"1.118.32.", "NL"}, {"1.23.251.", "IN"},
+            {"1.2.2.", "CN"}, {"2.16.53.", "RU"}, {"1.178.20.", "AE"}, {"1.32.200.", "SG"},
+            {"1.33.234.", "JP"}, {"2.16.167.", "CA"}, {"2.17.132.", "TR"}, {"2.27.72.", "PK"},
+            {"1.178.19.", "ID"}, {"2.19.188.", "UA"}, {"2.17.116.", "RO"}, {"1.52.52.", "VN"},
+            {"1.210.24.", "KR"}, {"2.16.252.", "MX"}};
+    /** How often each block is used for ordinary traffic (the first four are Kenyan cities: the "home" market). */
+    private static final int[] SITE_WEIGHTS = {30, 8, 4, 3, 4, 4, 2, 2, 3, 2, 3, 2, 5, 3, 3, 3, 3, 2, 2, 3,
+            3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1};
+    private static final int HOME_SITES = 4;
+    private static final int SITE_WEIGHT_TOTAL = java.util.Arrays.stream(SITE_WEIGHTS).sum();
+
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss Z", Locale.ENGLISH).withZone(ZoneOffset.UTC);
 
@@ -64,10 +86,21 @@ public final class LogGenerator {
      * Memory use is tiny and constant: lines are written through a buffer, never kept in a list.
      */
     public static long generate(Path out, long lines, long seed) throws IOException {
+        return generate(out, lines, seed, false);
+    }
+
+    /**
+     * Same as above; with {@code worldwide} true, clients come from many countries and logins from abroad fail
+     * more often. The result is a different log from the default one for the same seed (a changed login result
+     * changes how many random numbers the following lines use), but it is just as reproducible: the same seed and
+     * the same mode always give the byte-identical file. With {@code worldwide} false nothing changes at all.
+     */
+    public static long generate(Path out, long lines, long seed, boolean worldwide) throws IOException {
         if (lines < 0) {
             throw new IllegalArgumentException("lines must not be negative");
         }
         SplittableRandom random = new SplittableRandom(seed);
+        SplittableRandom geoRandom = new SplittableRandom(seed ^ 0x5DEECE66DL);   // own stream: never disturbs `random`
         double baseGapMillis = 25.0;
         double expectedSpan = lines * baseGapMillis / 0.62;          // rough length of the log in milliseconds
         long incidentStart = START_EPOCH_MILLIS + (long) (expectedSpan * (0.25 + 0.5 * random.nextDouble()));
@@ -96,6 +129,14 @@ public final class LogGenerator {
 
                 RouteSpec route = pickRoute(random);
                 int status = pickStatus(random, route);
+                int site = -1;
+                if (worldwide) {
+                    boolean login = route.pattern().equals("/api/auth/login");
+                    site = login && geoRandom.nextInt(100) < 55 ? geoRandom.nextInt(SITES.length) : pickSite(geoRandom);
+                    if (login && site >= HOME_SITES) {
+                        status = geoRandom.nextInt(100) < 80 ? 401 : 200;       // logins from abroad mostly fail
+                    }
+                }
                 boolean backend = route.pattern().startsWith("/api/products");
                 if (incident && backend && random.nextInt(100) < 30) {
                     status = random.nextInt(100) < 70 ? 500 : 503;    // the planted outage
@@ -106,9 +147,15 @@ public final class LogGenerator {
                     bytes = 120 + random.nextInt(200);                // short error body
                 }
 
+                String prefix = ADDRESS_PREFIXES[random.nextInt(ADDRESS_PREFIXES.length)];
+                int lastNumber = 1 + random.nextInt(254);
+                if (worldwide) {                                       // the draws above still happen, keeping the default stream intact
+                    prefix = SITES[site][0];
+                    lastNumber = 1 + geoRandom.nextInt(254);
+                }
                 line.setLength(0);
-                line.append(ADDRESS_PREFIXES[random.nextInt(ADDRESS_PREFIXES.length)])
-                        .append(1 + random.nextInt(254))
+                line.append(prefix)
+                        .append(lastNumber)
                         .append(" - ")
                         .append(random.nextInt(100) < 55 ? "-" : "user" + (1 + random.nextInt(80)))
                         .append(" [").append(stamp).append("] \"")
@@ -120,6 +167,18 @@ public final class LogGenerator {
             }
         }
         return Files.size(out);
+    }
+
+    /** Picks a worldwide block; Kenyan cities are the most common. */
+    private static int pickSite(SplittableRandom random) {
+        int roll = random.nextInt(SITE_WEIGHT_TOTAL);
+        for (int i = 0; i < SITE_WEIGHTS.length; i++) {
+            roll -= SITE_WEIGHTS[i];
+            if (roll < 0) {
+                return i;
+            }
+        }
+        return 0;
     }
 
     private static RouteSpec pickRoute(SplittableRandom random) {
